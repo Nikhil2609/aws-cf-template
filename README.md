@@ -22,5 +22,5 @@ Stack Parameter Default Value
 
 SSM Parameter
 -------------
-1) /todo-app/dev/VITE_API_BASE_URL (String)
-2) /todo-app/dev/DATABASE_URL (Secure String)
+- /todo-app/dev/VITE_API_BASE_URL (String)
+- /todo-app/dev/DATABASE_URL (Secure String)
