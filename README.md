@@ -11,7 +11,7 @@ CloudFormation Stack Steps
 2) Upload Root Stack
 
 
-Stack Parameter Default Value (AS Per Client)
+Stack Parameter Default Value
 -----------------------------
 CodeStarConnectionARN 
 FERepositoryId
@@ -22,5 +22,5 @@ DBSecretArn
 
 SSM Parameter
 -------------
-/todo-app/dev/VITE_API_BASE_URL (String)
-/todo-app/dev/DATABASE_URL (Secure String)
+1) /todo-app/dev/VITE_API_BASE_URL (String)
+2) /todo-app/dev/DATABASE_URL (Secure String)
