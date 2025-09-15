@@ -239,7 +239,7 @@ Resources:
         ArtifactBucketName: !GetAtt CloudfrontStack.Outputs.ArtifactBucketName
 
   # Cloudwatch Logs, Metrics and Alarms Stack
-  CloudWatchStack:
+  CloudwatchStack:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-cloudwatch-stack.yaml
@@ -249,7 +249,7 @@ Resources:
         AlarmEmail: !Ref AlarmEmail
         AutoScalingGroupName: !GetAtt EC2Stack.Outputs.AutoScalingGroup
         RDSInstance: !GetAtt DBStack.Outputs.RDSInstance
-        ALB: !GetAtt EC2Stack.Outputs.ALB
+        ALBFullName: !GetAtt EC2Stack.Outputs.ALBFullName
 
 Outputs:
   FrontendURL:

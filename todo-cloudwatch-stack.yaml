@@ -17,9 +17,9 @@ Parameters:
     Type: String
     Description: Auto Scaling Group Name
 
-  ALB:
+  ALBFullName:
     Type: String
-    Description: Application Load balancer Logical ID
+    Description: Application Load balancer Full Name
   
   RDSInstance: 
     Type: String
@@ -108,7 +108,7 @@ Resources:
       MetricName: HTTPCode_ELB_5XX_Count
       Dimensions:
         - Name: LoadBalancer
-          Value: !Ref ALB
+          Value: !Ref ALBFullName
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -166,7 +166,7 @@ Resources:
               "height": 6,
               "properties": {
                 "metrics": [
-                  [ "AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", "${ALB}" ]
+                  [ "AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", "${ALBFullName}" ]
                 ],
                 "period": 300,
                 "stat": "Sum",

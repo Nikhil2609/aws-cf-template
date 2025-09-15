@@ -24,3 +24,9 @@ SSM Parameter
 -------------
 - /todo-app/dev/VITE_API_BASE_URL (String)
 - /todo-app/dev/DATABASE_URL (Secure String)
+
+
+Post Stack Creation Action
+--------------------------
+1) Add FE URL to CORS Configuration
+2) Replace DATABASE_URL , VITE_API_BASE_URL to SSM parameter

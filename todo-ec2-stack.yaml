@@ -165,9 +165,9 @@ Resources:
                         "log_stream_name": "{instance_id}-pm2-error"
                       },
                       {
-                        "file_path": "/var/log/messages",
+                        "file_path": "/var/log/cloud-init-output.log",
                         "log_group_name": "/${AppName}/${Environment}/ec2/system",
-                        "log_stream_name": "{instance_id}-sys"
+                        "log_stream_name": "{instance_id}-system"
                       }
                     ]
                   }
@@ -261,6 +261,6 @@ Outputs:
   ALBTargetGroupName:   
     Description: ALB Target Group Name
     Value: !GetAtt ALBTargetGroup.TargetGroupName
-  ALB: 
+  ALBFullName: 
     Description: ALB Name
-    Value: !Ref ALB
+    Value: !GetAtt ALB.LoadBalancerFullName
