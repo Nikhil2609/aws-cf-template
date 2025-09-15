@@ -1,0 +1,266 @@
+Description: EC2, ALB, ASG Stack
+
+Parameters:
+  AppName: 
+    Type: String
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Description: "Environment"
+
+  VPCId: 
+    Type: String
+    Description: VPC ID
+
+  PublicSubnet1Id: 
+    Type: String
+    Description: The ID of the public subnet 1
+
+  PublicSubnet2Id: 
+    Type: String
+    Description: The ID of the public subnet 2
+
+  PrivateSubnet1Id: 
+    Type: String
+    Description: The ID of the private subnet 1
+
+  PrivateSubnet2Id: 
+    Type: String
+    Description: The ID of the private subnet 2
+
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  
+  InstanceType:
+    Type: String
+    Description: EC2 Instance Type
+
+  LatestAMIId:
+    Type: String
+    Description: Amazon Linux 2023 Latest AMI
+
+  ApiPortNumber: 
+    Type: Number
+    Description: Port Number on which API will run
+
+  MinCapacity:
+    Type: Number
+    Description: 'The minimum number of simultaneous instances, that you want to run.'
+  
+  MaxCapacity:
+    Type: Number
+    Description: 'The maximum number of simultaneous instances, that you want to run.'
+  
+  TargetCPUUtilization:
+    Type: Number
+    Description: "Target CPU Utilization for auto scaling"
+
+  EC2InstanceRoleARN: 
+    Type: String
+    Description: EC2 Instance Role ARN
+  
+  SSHSecurityGroupId: 
+    Type: String
+    Description: SSH Security Group ID
+
+  InstanceSecurityGroupId: 
+    Type: String
+    Description: Instance Security Group ID
+
+  ALBSecurityGroupId: 
+    Type: String
+    Description: ALB Security Group ID
+
+  LaunchInPrivateSubnet: 
+    Type: String
+    Description: "Setup EC2 and RDC instance in private subnet"
+
+# Condition
+Conditions:
+  UsePrivateSubnet: !Equals [ !Ref LaunchInPrivateSubnet, "true" ]
+    
+Resources:
+  # Bastion Host Instance
+  BastionHostInstance: 
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAMIId 
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnet1Id
+      SecurityGroupIds:
+        - !Ref SSHSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-bastion-instance
+
+  # Launch Template
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AppName}-${Environment}-api-launch-template"
+      LaunchTemplateData:
+        ImageId: !Ref LatestAMIId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPair
+        SecurityGroupIds:
+          - !Ref SSHSecurityGroupId
+          - !Ref InstanceSecurityGroupId
+        IamInstanceProfile:
+          Arn: !Ref EC2InstanceRoleARN
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+
+            # Update package list and install required tools
+            yum update -y
+
+            # Install Node
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            sudo yum install -y nodejs
+
+            # Install CodeDeploy Agent
+            yum install ruby -y
+            yum install wget -y
+            cd /home/ec2-user
+
+            # Download CodeDeploy agent installer
+            wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+
+            chmod +x ./install
+            ./install auto
+
+            # Start the CodeDeploy agent service
+            systemctl start codedeploy-agent
+            systemctl enable codedeploy-agent
+
+            # Install pm2
+            npm install -g pm2 || true
+
+            # proxy hello world to test instance
+            yum install -y nginx
+            systemctl start nginx
+            systemctl enable nginx
+            echo "<h1>Hello World from $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
+
+            echo "Install CloudWatch Agent"
+            yum install -y amazon-cloudwatch-agent
+
+            # CloudWatch Agent config file
+            cat <<EOF > /opt/aws/amazon-cloudwatch-agent/bin/config.json
+            {
+              "logs": {
+                "logs_collected": {
+                  "files": {
+                    "collect_list": [
+                      {
+                        "file_path": "/home/ec2-user/.pm2/logs/*-out.log",
+                        "log_group_name": "/${AppName}/${Environment}/ec2/app",
+                        "log_stream_name": "{instance_id}-pm2-success"
+                      },
+                      {
+                        "file_path": "/home/ec2-user/.pm2/logs/*-error.log",
+                        "log_group_name": "${AppName}/${Environment}/ec2/app",
+                        "log_stream_name": "{instance_id}-pm2-error"
+                      },
+                      {
+                        "file_path": "/var/log/messages",
+                        "log_group_name": "/${AppName}/${Environment}/ec2/system",
+                        "log_stream_name": "{instance_id}-sys"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+            EOF
+
+            # Start CloudWatch Agent
+            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/bin/config.json -s
+
+            echo "CloudWatch Agent setup complete"
+
+  # Load Balancer 
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-api-alb"
+      Subnets:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+      SecurityGroups:
+        - !Ref ALBSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${Environment}-api-alb"
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-api-tg"
+      TargetType: instance
+      Protocol: HTTP
+      Port: !Ref ApiPortNumber
+      VpcId: !Ref VPCId
+      HealthCheckPath: /health
+      HealthCheckPort: !Ref ApiPortNumber
+      Matcher:
+        HttpCode: "200-399"        
+  
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  # Auto scalling Group
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AppName}-${Environment}-api-asg"
+      VPCZoneIdentifier: !If
+        - UsePrivateSubnet
+        - [!Ref PrivateSubnet1Id, !Ref PrivateSubnet2Id]
+        - [!Ref PublicSubnet1Id, !Ref PublicSubnet2Id]
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinCapacity
+      MaxSize: !Ref MaxCapacity
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${Environment}-api-instance"
+          PropagateAtLaunch: true
+
+  # Target Tracking Policy
+  ASGScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref TargetCPUUtilization
+
+Outputs:
+  APIURL:
+    Description: Backend Api URL 
+    Value: !GetAtt ALB.DNSName
+  AutoScalingGroup: 
+    Description: Auto Scaling Group Name
+    Value: !Ref AutoScalingGroup
+  ALBTargetGroupName:   
+    Description: ALB Target Group Name
+    Value: !GetAtt ALBTargetGroup.TargetGroupName
+  ALB: 
+    Description: ALB Name
+    Value: !Ref ALB

@@ -1,0 +1,219 @@
+Description: VPC Stack 
+
+Parameters:
+  AppName: 
+    Type: String
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Description: "Environment"
+
+  VpcCIDR:
+    Type: String
+    Description: CIDR block for the VPC
+
+  PublicSubnet1CIDR:
+    Type: String
+    Description: CIDR block for the public subnet 1
+
+  PublicSubnet2CIDR:
+    Type: String
+    Description: CIDR block for the public subnet 2
+
+  PrivateSubnet1CIDR:
+    Type: String
+    Description: CIDR block for the private subnet 1
+  
+  PrivateSubnet2CIDR:
+    Type: String
+    Description: CIDR block for the private subnet 2
+
+  InstanceType:
+    Type: String
+    Description: EC2 Instance Type
+
+  LatestAMIId:
+    Type: String
+    Description: AMI ID for instance
+  
+  LaunchInPrivateSubnet: 
+    Type: String
+    Description: "Setup EC2 and RDC instance in private subnet"
+
+
+# Conditions
+Conditions:
+  UsePrivateSubnet: !Equals [!Ref LaunchInPrivateSubnet, "true"]
+
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      Tags:
+          - Key: Name
+            Value: !Sub ${AppName}-${Environment}-vpc
+
+  # Internet Gateway 
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-ig
+  
+  # Attach Internet Gateway to VPC
+  VPCInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Subnets (private , public)
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-public-subnet-a
+    
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-public-subnet-b
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-private-subnet-a
+    
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-private-subnet-b
+
+  # Routes
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-public-routetable
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Public table association
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Elastic IP for NAT Gateway
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Condition: UsePrivateSubnet
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-nat-ip
+
+  # NAT Gateway in Public Subnet
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: UsePrivateSubnet
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-nat-gateway
+    
+  # Private Route Table 
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: UsePrivateSubnet
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-${Environment}-private-routetable
+  
+  # Add Route for Private Subnets to use NAT Gateway
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: UsePrivateSubnet
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  # Private table association
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UsePrivateSubnet
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UsePrivateSubnet
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+
+Outputs:
+  VPCId: 
+    Value: !Ref VPC
+    Description: VPC ID
+  PublicSubnet1Id:
+    Value: !Ref PublicSubnet1
+    Description: The ID of the public subnet 1
+  PublicSubnet2Id:
+    Value: !Ref PublicSubnet2
+    Description: The ID of the public subnet 2
+  PrivateSubnet1Id:
+    Value: !Ref PrivateSubnet1
+    Description: The ID of the private subnet 1
+  PrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+    Description: The ID of the private subnet 2

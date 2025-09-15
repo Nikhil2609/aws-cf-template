@@ -1,0 +1,100 @@
+Description: Datbase stack
+
+Parameters:
+  AppName: 
+    Type: String
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Description: "Environment"
+
+  VPCId: 
+    Type: String
+    Description: VPC ID
+
+  PublicSubnet1Id: 
+    Type: String
+    Description: The ID of the public subnet 1
+
+  PublicSubnet2Id: 
+    Type: String
+    Description: The ID of the public subnet 2
+
+  PrivateSubnet1Id: 
+    Type: String
+    Description: The ID of the private subnet 1
+
+  PrivateSubnet2Id: 
+    Type: String
+    Description: The ID of the private subnet 2
+  
+  DBName:
+    Type: String
+    Description: Initial database name
+
+  DBSecretArn:
+    Type: String
+    Description: ARN of the existing Secrets Manager secret (username/password)
+  
+  DBAllocatedStorage:
+    Type: Number
+    Description: Database Storage size in GB
+
+  DatabaseSecurityGroupId: 
+    Type: String
+    Description: Database Security Group Id
+  
+  LaunchInPrivateSubnet: 
+    Type: String
+    Description: "Setup EC2 and RDC instance in private subnet"
+
+
+# Condition
+Conditions:
+  UsePrivateSubnet: !Equals [ !Ref LaunchInPrivateSubnet, "true" ]
+
+Resources:
+  # DB subnet group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "${AppName}-${Environment}-db-subnet-group"
+      DBSubnetGroupDescription: "DB Subnet group"
+      SubnetIds: !If
+        - UsePrivateSubnet
+        - [!Ref PrivateSubnet1Id, !Ref PrivateSubnet2Id]
+        - [!Ref PublicSubnet1Id, !Ref PublicSubnet2Id]
+
+
+  # DB instance
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: "postgres"
+      DBInstanceIdentifier: !Sub "${AppName}-${Environment}-db-instance"
+      DBInstanceClass: db.t3.micro
+      DBName: !Ref DBName
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DBSecretArn}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBSecretArn}:SecretString:password}}"
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroupId
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MultiAZ: false
+      DeletionProtection: true
+      PreferredBackupWindow: "03:00-04:00"
+      BackupRetentionPeriod: 7
+      EnableCloudwatchLogsExports:   # enable CloudWatch logging
+        - postgresql
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${Environment}-db-instance"
+
+Outputs:
+  DBInstanceEndpoint:
+    Description: Database endpoint
+    Value: !GetAtt DBInstance.Endpoint.Address 
+  RDSInstance: 
+    Value: !Ref DBInstance
+    Description: RDS Instance

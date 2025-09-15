@@ -1,0 +1,260 @@
+Description: Root Stack 
+
+Parameters:
+  AppName: 
+    Type: String
+    Default: "todo-app"
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Default: "dev"
+    AllowedValues: ["dev", "stage", "uat" ,"prod"]
+    Description: "Environment"
+  
+  LaunchInPrivateSubnet: 
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Setup EC2 and RDC instance in private subnet"
+
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC
+
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for the public subnet 1
+
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for the public subnet 2
+
+  PrivateSubnet1CIDR:
+    Type: String
+    Default: 10.0.3.0/24
+    Description: CIDR block for the private subnet 1
+  
+  PrivateSubnet2CIDR:
+    Type: String
+    Default: 10.0.4.0/24
+    Description: CIDR block for the private subnet 2
+
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 Instance Type
+
+  LatestAMIId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 Latest AMI
+
+  ApiPortNumber: 
+    Type: Number
+    Default: 3000
+    Description: Port Number on which API will run
+
+  MinCapacity:
+    Description: 'The minimum number of simultaneous instances, that you want to run.'
+    Type: Number
+    Default: 1
+    ConstraintDescription: 'Must be >= 1'
+    MinValue: 1
+  
+  MaxCapacity:
+    Description: 'The maximum number of simultaneous instances, that you want to run.'
+    Type: Number
+    Default: 2
+    ConstraintDescription: 'Must be >= 1'
+    MaxValue: 3
+    MinValue: 1
+  
+  TargetCPUUtilization:
+    Description: "Target CPU Utilization for auto scaling"
+    Type: Number
+    Default: 80
+
+  DBName:
+    Type: String
+    Default: TodoDEVDB
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    Description: Initial database name
+
+  DBSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:ap-south-1:677674062026:secret:todo/dev/credentials-SqtAXD
+    Description: ARN of the existing Secrets Manager secret (username/password)
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Database Storage size in GB
+
+  CodeStarConnectionARN:
+    Type: String
+    Default: arn:aws:codeconnections:ap-south-1:677674062026:connection/318c2d7e-b213-4139-aebc-d859e065b256
+    Description: CodeStar connection ARN
+
+  FERepositoryId:
+    Type: String
+    Default: Nikhil2609/todo-react
+    Description: owner/repo (e.g., myuser/my-frontend-repository)
+
+  BERepositoryId:
+    Type: String
+    Default: Nikhil2609/todo-node
+    Description: owner/repo (e.g., myuser/my-backend-repository)
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch name
+
+  AlarmEmail: 
+    Type: String
+    Default: nikhil.panchal@tatvasoft.com
+    Description: "Email address to receive CloudWatch alarms"
+
+Resources:
+  # VPC Stack
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-vpc-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnet1CIDR: !Ref PublicSubnet1CIDR
+        PublicSubnet2CIDR: !Ref PublicSubnet2CIDR
+        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
+        PrivateSubnet2CIDR: !Ref PrivateSubnet2CIDR
+        InstanceType: !Ref InstanceType
+        LatestAMIId: !Ref LatestAMIId
+        LaunchInPrivateSubnet: !Ref LaunchInPrivateSubnet
+
+  # Security Group Stack
+  SecurityGroupStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-sg-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+
+  # Cloudfront Stack
+  CloudfrontStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-cloudfront-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+
+  # EC2 Stack
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-ec2-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+        PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
+        PrivateSubnet1Id: !GetAtt VPCStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt VPCStack.Outputs.PrivateSubnet2Id
+        EC2InstanceRoleARN: !GetAtt ServiceRoleStack.Outputs.EC2InstanceProfileArn
+        SSHSecurityGroupId: !GetAtt SecurityGroupStack.Outputs.SSHSecurityGroupId
+        InstanceSecurityGroupId: !GetAtt SecurityGroupStack.Outputs.InstanceSecurityGroupId
+        ALBSecurityGroupId: !GetAtt SecurityGroupStack.Outputs.ALBSecurityGroupId
+        KeyPair: !Ref KeyPair
+        InstanceType: !Ref InstanceType
+        LatestAMIId: !Ref LatestAMIId
+        ApiPortNumber: !Ref ApiPortNumber
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        TargetCPUUtilization: !Ref TargetCPUUtilization
+        LaunchInPrivateSubnet: !Ref LaunchInPrivateSubnet
+
+  # DB Stack
+  DBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-db-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+        PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
+        PrivateSubnet1Id: !GetAtt VPCStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt VPCStack.Outputs.PrivateSubnet2Id
+        DBName: !Ref DBName
+        DBSecretArn: !Ref DBSecretArn
+        DBAllocatedStorage: !Ref DBAllocatedStorage
+        DatabaseSecurityGroupId: !GetAtt SecurityGroupStack.Outputs.DatabaseSecurityGroupId
+        LaunchInPrivateSubnet: !Ref LaunchInPrivateSubnet
+
+  # Code Pipeline stack
+  CodePipelineStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-cicd-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        CodeStarConnectionARN: !Ref CodeStarConnectionARN
+        FERepositoryId: !Ref FERepositoryId
+        BERepositoryId: !Ref BERepositoryId
+        GitHubBranch: !Ref GitHubBranch
+        FrontendBucketName: !GetAtt CloudfrontStack.Outputs.FrontendBucketName
+        CloudFrontDistributionId: !GetAtt CloudfrontStack.Outputs.CloudFrontDistributionId
+        ArtifactBucketName: !GetAtt CloudfrontStack.Outputs.ArtifactBucketName
+        AutoScalingGroup: !GetAtt EC2Stack.Outputs.AutoScalingGroup
+        ALBTargetGroupName: !GetAtt EC2Stack.Outputs.ALBTargetGroupName
+        CodePipelineServiceRoleFEArn: !GetAtt ServiceRoleStack.Outputs.CodePipelineServiceRoleFEArn
+        CodePipelineServiceRoleBEArn: !GetAtt ServiceRoleStack.Outputs.CodePipelineServiceRoleBEArn
+        CodeBuildServiceRoleArn: !GetAtt ServiceRoleStack.Outputs.CodeBuildServiceRoleArn
+        CodeDeployServiceRoleArn: !GetAtt ServiceRoleStack.Outputs.CodeDeployServiceRoleArn
+
+  # Service Role stack
+  ServiceRoleStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-role-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        CodeStarConnectionARN: !Ref CodeStarConnectionARN
+        ArtifactBucketName: !GetAtt CloudfrontStack.Outputs.ArtifactBucketName
+
+  # Cloudwatch Logs, Metrics and Alarms Stack
+  CloudWatchStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://todo-app-cf-template.s3.ap-south-1.amazonaws.com/DEV/todo-cloudwatch-stack.yaml
+      Parameters:
+        AppName: !Ref AppName
+        Environment: !Ref Environment
+        AlarmEmail: !Ref AlarmEmail
+        AutoScalingGroupName: !GetAtt EC2Stack.Outputs.AutoScalingGroup
+        RDSInstance: !GetAtt DBStack.Outputs.RDSInstance
+        ALB: !GetAtt EC2Stack.Outputs.ALB
+
+Outputs:
+  FrontendURL:
+    Description: CloudFront FE URL
+    Value: !GetAtt CloudfrontStack.Outputs.FrontendURL
+  BackendURL: 
+    Description: API URL - Load balancer
+    Value: !GetAtt EC2Stack.Outputs.APIURL

@@ -1,0 +1,209 @@
+Description: Role Stack
+
+Parameters:
+  AppName: 
+    Type: String
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Description: "Environment"
+
+  CodeStarConnectionARN:
+    Type: String
+    Description: CodeStar connection ARN
+
+  ArtifactBucketName: 
+    Type: String
+    Description: Artifact bucket Name
+
+Resources:
+  # Instance Role
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Environment}-instance-role"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      Policies:
+        - PolicyName: CloudWatchAgentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  # Instance Profile
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceRole
+
+  # Service Role CodePipeline - FE
+  CodePipelineServiceRoleFE: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Environment}-fe-pipeline-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+      - PolicyName: CodeStarConnectionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: codestar-connections:UseConnection
+              Resource: !Ref CodeStarConnectionARN
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+              Resource: 
+                - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*"
+
+  # Service Role CodePipeline - BE
+  CodePipelineServiceRoleBE: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Environment}-be-pipeline-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
+        - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+      - PolicyName: CodeStarConnectionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: codestar-connections:UseConnection
+              Resource: !Ref CodeStarConnectionARN
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+              Resource: 
+                - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*"
+
+  # Service Role CodeBuild - FE , BE 
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Environment}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AppName}/${Environment}/*"
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+
+  # Service Role CodeDeploy - BE
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Environment}-codedeploy-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      Policies:
+        - PolicyName: CodeDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AppName}/${Environment}/*"
+    
+
+Outputs:
+  EC2InstanceProfileArn:
+    Value: !GetAtt InstanceProfile.Arn
+    Description: Instance profile ARN
+  CodePipelineServiceRoleFEArn:
+    Value: !GetAtt CodePipelineServiceRoleFE.Arn
+    Description: FE Code Pipeline Service Role ARN
+  CodePipelineServiceRoleBEArn:
+    Value: !GetAtt CodePipelineServiceRoleBE.Arn
+    Description: BE Code Pipeline Service Role ARN
+  CodeBuildServiceRoleArn:
+    Value: !GetAtt CodeBuildServiceRole.Arn
+    Description: CodeBuild Service Role ARN
+  CodeDeployServiceRoleArn:
+    Value: !GetAtt CodeDeployServiceRole.Arn
+    Description: CodeDeploy Service Role ARN
+

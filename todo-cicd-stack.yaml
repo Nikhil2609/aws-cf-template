@@ -1,0 +1,313 @@
+Description: CodePipeline Stack for WEB and API 
+
+Parameters:
+  AppName:
+    Type: String
+    Description: Application name that is prefixed to resource names
+
+  Environment:
+    Type: String
+    Description: "Environment"
+
+  CodeStarConnectionARN:
+    Type: String
+    Description: CodeStar connection ARN
+
+  FERepositoryId:
+    Type: String
+    Description: owner/repo (e.g., myuser/my-frontend-repository)
+
+  BERepositoryId:
+    Type: String
+    Description: owner/repo (e.g., myuser/my-backend-repository)
+
+  GitHubBranch:
+    Type: String
+    Description: Branch name
+
+  FrontendBucketName: 
+    Type: String
+    Description: Frontend S3 bucket
+
+  AutoScalingGroup: 
+    Type: String
+    Description: Auto Scaling Group Name
+
+  ALBTargetGroupName: 
+    Type: String
+    Description: ALB Target Group Name
+
+  CodePipelineServiceRoleFEArn: 
+    Type: String
+    Description: FE Code Pipeline ARN
+
+  CodePipelineServiceRoleBEArn: 
+    Type: String
+    Description: BE Code Pipeline ARN
+
+  CodeBuildServiceRoleArn:
+    Type: String
+    Description: CodeBuild Service Role ARN
+
+  CodeDeployServiceRoleArn:
+    Type: String
+    Description: CodeDeploy Service Role ARN
+
+  CloudFrontDistributionId:
+    Type: String
+    Description: CloudFront Distribution ID for FE app
+
+  ArtifactBucketName: 
+    Type: String
+    Description: Artifact bucket Name
+
+Resources:
+  # Code Build FE
+  CodeBuildFE:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-web-codebuild"
+      Source:
+        Type: CODEPIPELINE 
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: APPNAME
+            Type: PLAINTEXT
+            Value: !Ref AppName
+          - Name: ENVIRONMENT
+            Type: PLAINTEXT
+            Value: !Ref Environment
+
+  # Code Build Cloudfront Invaidate Cache
+  CodeBuildCloudFrontInvalidation:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-cf-invalidation-codebuild"
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: CLOUDFRONT_ID
+            Value: !Ref CloudFrontDistributionId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Invalidate CloudFront cache..."
+                - echo "CLOUDFRONT_ID ===>>> $CLOUDFRONT_ID"
+                - aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"
+
+  # Code Build BE 
+  CodeBuildBE:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-api-codebuild"
+      Source:
+        Type: CODEPIPELINE 
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: APPNAME
+            Type: PLAINTEXT
+            Value: !Ref AppName
+          - Name: ENVIRONMENT
+            Type: PLAINTEXT
+            Value: !Ref Environment
+    
+  # Code Deploy BE to EC2 instance
+  CodeDeployBE:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub "${AppName}-${Environment}-api-codedeploy"
+      ComputePlatform: Server
+
+  CodeDeployDeploymentGroupBE:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployBE
+      DeploymentGroupName: !Sub "${AppName}-${Environment}-api-codedeploy-group"
+      ServiceRoleArn: !Ref CodeDeployServiceRoleArn
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+        DeploymentType: IN_PLACE
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !Ref ALBTargetGroupName
+
+  # Code Pipeline FE 
+  CodepipelineFE:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-web-codepipeline"
+      RoleArn: !Ref CodePipelineServiceRoleFEArn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucketName
+      Stages: 
+        - 
+          Name: Source
+          Actions:
+            - 
+              Name: GitHub_Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              OutputArtifacts:  
+                - Name: SourceOutput
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionARN
+                FullRepositoryId: !Ref FERepositoryId
+                BranchName: !Ref GitHubBranch
+                DetectChanges: 'true'
+        - 
+          Name: Build
+          Actions:
+            - 
+              Name: CodeBuild
+              ActionTypeId:   
+                Category: Build 
+                Owner: AWS
+                Provider: CodeBuild 
+                Version: '1'  
+              InputArtifacts: 
+                - Name: SourceOutput
+              OutputArtifacts: 
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildFE
+        - 
+          Name: Approve
+          Actions:
+            - 
+              Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+        - 
+          Name: Deploy
+          Actions:
+            - 
+              Name: DeployToS3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              InputArtifacts: 
+                - Name: BuildOutput
+              Configuration:
+                BucketName: !Ref FrontendBucketName  
+                Extract: true 
+            - 
+              Name: InvalidateCache
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 2
+              Configuration:
+                ProjectName: !Ref CodeBuildCloudFrontInvalidation
+                             
+  # Code Pipeline BE
+  CodepipelineBE:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${AppName}-${Environment}-api-codepipeline"
+      RoleArn: !Ref CodePipelineServiceRoleBEArn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucketName
+      Stages: 
+        - 
+          Name: Source
+          Actions:
+            - 
+              Name: GitHub_Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              OutputArtifacts:  
+                - Name: SourceOutput
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionARN
+                FullRepositoryId: !Ref BERepositoryId
+                BranchName: !Ref GitHubBranch
+                DetectChanges: 'true'
+        - 
+          Name: Build
+          Actions:
+            - 
+              Name: CodeBuild_Build
+              ActionTypeId:   
+                Category: Build 
+                Owner: AWS
+                Provider: CodeBuild 
+                Version: '1'  
+              InputArtifacts: 
+                - Name: SourceOutput
+              OutputArtifacts: 
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildBE 
+        - 
+          Name: Approve
+          Actions:
+            - 
+              Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+        - 
+          Name: Deploy
+          Actions:
+            - 
+              Name: DeployWithCodeDeploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: '1'
+              InputArtifacts: 
+                - Name: BuildOutput
+              Configuration:
+                ApplicationName: !Ref CodeDeployBE
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroupBE
+
+# Outputs:
+  # ArtifactBucketARN:
+  #   Description: Artifact S3 bucket ARN
+  #   Value: !GetAtt ArtifactBucket.Arn

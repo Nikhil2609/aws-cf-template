@@ -1,0 +1,92 @@
+Description: S3 and Cloudfront Stack for Web app
+
+Parameters:
+  AppName: 
+    Type: String
+    Description: "Application name that is prefixed to resource names"
+
+  Environment: 
+    Type: String
+    Description: "Environment"
+
+Resources:
+  # S3 Bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "${AppName}-${Environment}-web-bucket"
+      VersioningConfiguration:
+        Status: Enabled
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+    
+  # S3 Bucket Policy for CloudFront access
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${S3Bucket.Arn}/*"
+
+  # Origin Access Control for CloudFront
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AppName}-${Environment}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt S3Bucket.RegionalDomainName
+            S3OriginConfig: {}
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: allow-all
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  # Artifact Bucket - CodePipeline
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+Outputs:
+  FrontendURL:
+    Description: CloudFront URL for the App
+    Value: !GetAtt CloudFrontDistribution.DomainName
+  FrontendBucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3Bucket
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+  ArtifactBucketName:
+    Description: Artifact Bucket Name
+    Value: !Ref ArtifactBucket
