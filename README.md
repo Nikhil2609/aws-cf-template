@@ -13,12 +13,12 @@ CloudFormation Stack Steps
 
 Stack Parameter Default Value
 -----------------------------
-CodeStarConnectionARN 
-FERepositoryId
-BERepositoryId
-GitHubBranch
-AlarmEmail
-DBSecretArn
+- CodeStarConnectionARN 
+- FERepositoryId
+- BERepositoryId
+- GitHubBranch
+- AlarmEmail
+- DBSecretArn
 
 SSM Parameter
 -------------
